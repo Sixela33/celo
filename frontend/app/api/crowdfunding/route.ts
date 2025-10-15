@@ -108,6 +108,8 @@ export async function POST(request: Request) {
       );
     }
 
+
+    // Deploying Contract
     const privateKey = process.env.PRIVATE_KEY;
     const factoryAddress = process.env.FACTORY_ADDRESS;
     const RPC_URL = process.env.RPC_URL;

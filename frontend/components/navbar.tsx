@@ -6,6 +6,7 @@ import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import MintButton from "./mintButton";
 
 export function Navbar() {
   const pathname = usePathname();
@@ -34,6 +35,7 @@ export function Navbar() {
           ))}
           <ThemeSwitcher />
           <ConnectButton />
+          <MintButton />
         </nav>
       </div>
     </header>

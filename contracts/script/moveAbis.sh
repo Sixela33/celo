@@ -12,3 +12,4 @@ mkdir -p $frontend_dir
 
 cp ../out/CrowdFundFactory.sol/CrowdFundFactory.json $frontend_dir/CrowdFundFactory.json
 cp ../out/Crowdfund.sol/Crowdfund.json $frontend_dir/Crowdfund.json
+cp ../out/GoodDollar.sol/GoodDollar.json $frontend_dir/GoodDollar.json

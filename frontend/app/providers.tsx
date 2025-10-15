@@ -7,6 +7,7 @@ import {
 import { WagmiProvider } from 'wagmi';
 import {
   celo,
+  celoSepolia,
 } from 'wagmi/chains';
 import {
   QueryClientProvider,
@@ -16,7 +17,7 @@ import {
 const config = getDefaultConfig({
   appName: 'Celo Crowdfund',
   projectId: process.env.NEXT_PUBLIC_RAINBOWKIT_PROJECT_ID! || 'your-project-id',
-  chains: [celo],
+  chains: [celo, celoSepolia],
   ssr: true, // If your dApp uses server side rendering (SSR)
 });
 
