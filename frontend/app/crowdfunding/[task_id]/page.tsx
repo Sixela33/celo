@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
+import { CrowdfundWidget } from "@/components/crowdfund-widget";
 
 type CrowdfundingData = {
   general_description?: string;
@@ -21,6 +22,8 @@ type CrowdfundingRow = {
   photos: string[] | null;
   location_gps: Record<string, unknown> | null;
   created_at: string;
+  contract_address: string | null;
+  target_amount: number | null;
 };
 
 export default async function Page({ params }: { params: Promise<{ task_id: string }> }) {
@@ -28,7 +31,7 @@ export default async function Page({ params }: { params: Promise<{ task_id: stri
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("crowdfunding_submissions")
-    .select("task_id, user_id, crowdfunding_data, task_specifics, total_cost, photos, location_gps, created_at")
+    .select("task_id, user_id, crowdfunding_data, task_specifics, total_cost, photos, location_gps, created_at, contract_address, target_amount")
     .eq("task_id", task_id)
     .maybeSingle();
 
@@ -45,6 +48,7 @@ export default async function Page({ params }: { params: Promise<{ task_id: stri
   const title = g.general_description || "Crowdfunding";
   const subtitle = g.geographic_location || g.risk_summary || "";
   const created = new Date(row.created_at);
+  const hasOnChain = Boolean(row.contract_address);
 
   return (
     <main className="container mx-auto max-w-3xl p-6">
@@ -86,6 +90,12 @@ export default async function Page({ params }: { params: Promise<{ task_id: stri
               <span>Created</span>
               <span className="font-medium">{created.toLocaleString()}</span>
             </div>
+            {hasOnChain ? (
+              <div className="flex items-center justify-between">
+                <span>Target (on-chain)</span>
+                <span className="font-medium">{row.target_amount ?? "-"}</span>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -121,6 +131,10 @@ export default async function Page({ params }: { params: Promise<{ task_id: stri
             )}
           </CardContent>
         </Card>
+
+        {hasOnChain ? (
+          <CrowdfundWidget contractAddress={row.contract_address as string} />
+        ) : null}
 
         <Card>
           <CardHeader>
