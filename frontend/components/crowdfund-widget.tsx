@@ -1,11 +1,12 @@
 "use client";
 import { useMemo, useState } from "react";
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits, zeroAddress } from "viem";
 import CrowdfundAbi from "@/abis/Crowdfund.json";
 import GoodDollarAbi from "@/abis/GoodDollar.json";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { waitForTransactionReceipt } from "viem/actions";
 
 type Props = {
   contractAddress: string;
@@ -73,7 +74,8 @@ export function CrowdfundWidget({ contractAddress }: Props) {
     }
   }, [amountInput, decimals, myAllowance]);
 
-  const { writeContract, data: txHash, isPending } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { writeContract, writeContractAsync, data: txHash, isPending } = useWriteContract();
   const { isLoading: isTxLoading, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({
     hash: txHash,
   });
@@ -85,16 +87,20 @@ export function CrowdfundWidget({ contractAddress }: Props) {
 
       // Approve if needed
       if (needsApprove) {
-        await writeContract({
+        if (!publicClient) return;
+        const approveHash = await writeContractAsync({
           abi: GoodDollarAbi.abi as any,
           address: tokenAddress as `0x${string}`,
           functionName: "approve",
           args: [contractAddress as `0x${string}`, parsed],
         });
-        return; // wait for next click to donate after approve mined
+        await waitForTransactionReceipt(publicClient, { hash: approveHash });
+        await refetchAllowance();
+        // After approval mined, recompute and proceed to donate
+        // No early return; fall through to send donate tx
       }
 
-      await writeContract({
+      await writeContractAsync({
         abi: CrowdfundAbi.abi as any,
         address: contractAddress as `0x${string}`,
         functionName: "donate",

@@ -2,108 +2,57 @@ import { NextResponse } from "next/server";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { ethers } from "ethers";
 import CrowdFundFactory from "@/abis/CrowdFundFactory.json";
+import { z } from "zod";
 
 
-type Payload = {
-  task_id: string;
-  user_id: number;
-  crowdfunding_data: unknown;
-  task_specifics: unknown;
-  total_cost: number;
-  photos: string[];
-  location_gps: unknown;
-  created_at: string;
-  target_amount: number;
-  receiver_address: string;
-  deploy_tx_hash?: string | null;
-};
+const payloadSchema = z.object({
+  task_id: z.string().min(1, "task_id is required"),
+  user_id: z.coerce.number().refine((v) => Number.isFinite(v), "user_id is required"),
+  crowdfunding_data: z.object({}).passthrough(),
+  task_specifics: z.object({}).passthrough(),
+  total_cost: z.coerce.number().refine((v) => Number.isFinite(v), "total_cost is required"),
+  photos: z.array(z.string()),
+  location_gps: z.object({}).passthrough(),
+  created_at: z.string().min(1, "created_at is required"),
+  target_amount: z.coerce.number().refine((v) => Number.isFinite(v), "target_amount is required"),
+  receiver_address: z.string().refine((v) => {
+    try { return ethers.isAddress(v); } catch { return false; }
+  }, "receiver_address must be a valid address"),
+});
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null;
-const isNonEmptyString = (v: unknown): v is string =>
-  typeof v === "string" && v.length > 0;
-const isNumber = (v: unknown): v is number =>
-  typeof v === "number" && !Number.isNaN(v);
-const isStringArray = (v: unknown): v is string[] =>
-  Array.isArray(v) && v.every((i) => typeof i === "string");
-
-function validatePayload(input: unknown):
-  | { ok: true; data: Payload }
-  | { ok: false; errors: string[] } {
-  if (!isObject(input)) {
-    return { ok: false, errors: ["Body must be a JSON object"] };
-  }
-  const errors: string[] = [];
-  const {
-    task_id,
-    user_id,
-    crowdfunding_data,
-    task_specifics,
-    total_cost,
-    photos,
-    location_gps,
-    created_at,
-    target_amount,
-    receiver_address
-  } = input as Record<string, unknown>;
-
-  if (!isNonEmptyString(task_id)) errors.push("task_id is required");
-  if (!isNumber(user_id)) errors.push("user_id is required");
-  if (!isObject(crowdfunding_data)) errors.push("crowdfunding_data must be an object");
-  if (!isObject(task_specifics)) errors.push("task_specifics must be an object");
-  if (!isNumber(total_cost)) errors.push("total_cost is required");
-  if (!isStringArray(photos)) errors.push("photos must be an array of strings");
-  if (!isObject(location_gps)) errors.push("location_gps must be an object");
-  if (!isNonEmptyString(created_at)) errors.push("created_at is required");
-  if (!isNumber(target_amount)) errors.push("target_amount is required");
-  if (!isNonEmptyString(receiver_address)) errors.push("receiver_address is required");
-
-  if (errors.length > 0) {
-    return { ok: false, errors };
-  }
-
-  return {
-    ok: true,
-    data: {
-      task_id,
-      user_id,
-      crowdfunding_data,
-      task_specifics,
-      total_cost,
-      photos,
-      location_gps,
-      created_at,
-      target_amount,
-      receiver_address,
-    } as Payload,
-  };
-}
+type Payload = z.infer<typeof payloadSchema> & { deploy_tx_hash?: string | null };
 
 export async function POST(request: Request) {
   try {
     const contentType = request.headers.get("content-type") || "";
     if (!contentType.includes("application/json")) {
       return NextResponse.json(
-        { error: "Content-Type must be application/json" },
+        { error: { code: "UNSUPPORTED_MEDIA_TYPE", message: "Content-Type must be application/json" } },
         { status: 415 },
       );
     }
     const body = await request.json().catch(() => null);
-    const result = validatePayload(body);
-    if (!result.ok) {
+    const parsed = payloadSchema.safeParse(body);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => ({
+        path: i.path.join("."),
+        message: i.message,
+        code: i.code,
+      }));
       return NextResponse.json(
-        { error: "Invalid payload", details: result.errors },
+        { error: { code: "INVALID_PAYLOAD", message: "Invalid payload", issues } },
         { status: 400 },
       );
     }
+    const data: Payload = parsed.data;
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.from("crowdfunding_submissions").upsert(
-      [result.data],
+      [data],
       { onConflict: "task_id" },
     );
     if (error) {
       return NextResponse.json(
-        { error: "Database error", details: error.message },
+        { error: { code: "DB_UPSERT_FAILED", message: "Database error", details: error.message } },
         { status: 500 },
       );
     }
@@ -114,19 +63,40 @@ export async function POST(request: Request) {
     const factoryAddress = process.env.FACTORY_ADDRESS;
     const RPC_URL = process.env.RPC_URL;
     if (!privateKey || !factoryAddress || !RPC_URL) {
+      const missing = [
+        ["PRIVATE_KEY", privateKey],
+        ["FACTORY_ADDRESS", factoryAddress],
+        ["RPC_URL", RPC_URL],
+      ].filter(([, v]) => !v).map(([k]) => k);
       return NextResponse.json(
-        { error: "Private key not found" },
+        { error: { code: "ENV_MISSING", message: "Missing required environment variables", details: missing } },
         { status: 500 },
       );
     }
     const provider = new ethers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(privateKey, provider);
     const factory = new ethers.Contract(factoryAddress, CrowdFundFactory.abi, wallet);
-    const tx = await factory.createCrowdfund(
-      result.data.receiver_address,
-      ethers.parseUnits(String(result.data.target_amount), 18),
-    );
-    const receipt = await tx.wait();
+    let tx;
+    try {
+      tx = await factory.createCrowdfund(
+        data.receiver_address,
+        ethers.parseUnits(String(data.target_amount), 18),
+      );
+    } catch (err) {
+      return NextResponse.json(
+        { error: { code: "DEPLOYMENT_SUBMIT_FAILED", message: "Failed to submit deployment transaction", details: (err as Error).message } },
+        { status: 500 },
+      );
+    }
+    let receipt;
+    try {
+      receipt = await tx.wait();
+    } catch (err) {
+      return NextResponse.json(
+        { error: { code: "DEPLOYMENT_WAIT_FAILED", message: "Failed while waiting for transaction receipt", details: (err as Error).message } },
+        { status: 500 },
+      );
+    }
 
     // Parse the CrowdfundCreated event to get the deployed crowdfund address
     const iface = new ethers.Interface(CrowdFundFactory.abi);
@@ -153,12 +123,12 @@ export async function POST(request: Request) {
     await supabase
       .from("crowdfunding_submissions")
       .update({ deploy_tx_hash: tx.hash, contract_address: contractAddress })
-      .eq("task_id", result.data.task_id);
+      .eq("task_id", data.task_id);
 
     return NextResponse.json({ ok: true, txHash: tx.hash, contractAddress }, { status: 200 });
   } catch (e) {
     return NextResponse.json(
-      { error: "Unexpected error", details: (e as Error).message },
+      { error: { code: "INTERNAL_ERROR", message: "Unexpected error", details: (e as Error).message } },
       { status: 500 },
     );
   }

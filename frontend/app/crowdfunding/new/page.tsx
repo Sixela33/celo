@@ -43,6 +43,20 @@ export default function NewCrowdfundingPage() {
 
   const photosAsArray = useMemo(() => photoUrls.map((p) => p.url).filter(Boolean), [photoUrls]);
 
+  // Format API error object from the server into a user-friendly string
+  const formatApiError = useCallback((err: any): string => {
+    if (!err) return "Request failed";
+    if (typeof err === "string") return err;
+    const base = err.message || err.code || "Request failed";
+    if (Array.isArray(err.issues) && err.issues.length > 0) {
+      const details = err.issues
+        .map((i: any) => `${i.path || "field"}: ${i.message || "invalid"}`)
+        .join("; ");
+      return `${base}: ${details}`;
+    }
+    return base;
+  }, []);
+
   const addPhotoField = useCallback(() => {
     setPhotoUrls((prev) => [...prev, { url: "" }]);
   }, []);
@@ -125,8 +139,22 @@ export default function NewCrowdfundingPage() {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || "Request failed");
+        const data = await res.json().catch(() => null);
+        const apiErr = data?.error;
+        // Map server validation issues to specific form fields when possible
+        if (apiErr && Array.isArray(apiErr.issues)) {
+          const pathToField: Record<string, keyof FormValues> = {
+            receiver_address: "receiverAddress",
+            target_amount: "targetAmount",
+          } as const;
+          apiErr.issues.forEach((issue: any) => {
+            const field = pathToField[issue?.path as string];
+            if (field) {
+              form.setError(field, { type: "server", message: issue?.message || "Invalid" });
+            }
+          });
+        }
+        throw new Error(formatApiError(apiErr));
       }
       setResultMessage("Crowdfunding created successfully.");
     } catch (err) {

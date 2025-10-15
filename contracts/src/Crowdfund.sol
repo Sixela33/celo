@@ -27,11 +27,12 @@ contract Crowdfund {
         require(!isCompleted, "Crowdfund completed");
         require(amount > 0, "Amount must be > 0");
         // Pull tokens from donor into this contract
+        amount = Math.min(amount, targetAmount-totalRaised);
         token.safeTransferFrom(msg.sender, address(this), amount);
-        amount = Math.min(amount, targetAmount);
         totalRaised += amount;
         if (totalRaised >= targetAmount) {
             isCompleted = true;
+            withdraw();  
         }
         emit Donated(msg.sender, amount);
     }
