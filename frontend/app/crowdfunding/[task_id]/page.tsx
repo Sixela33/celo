@@ -133,7 +133,7 @@ export default async function Page({ params }: { params: Promise<{ task_id: stri
         </Card>
 
         {hasOnChain ? (
-          <CrowdfundWidget contractAddress={row.contract_address as string} />
+          <CrowdfundWidget contractAddress={row.contract_address as string} taskId={row.task_id} />
         ) : null}
 
         <Card>

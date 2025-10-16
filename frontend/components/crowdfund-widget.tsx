@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits, zeroAddress } from "viem";
 import CrowdfundAbi from "@/abis/Crowdfund.json";
@@ -10,11 +10,14 @@ import { waitForTransactionReceipt } from "viem/actions";
 
 type Props = {
   contractAddress: string;
+  taskId?: string;
 };
 
-export function CrowdfundWidget({ contractAddress }: Props) {
+export function CrowdfundWidget({ contractAddress, taskId }: Props) {
   const { address } = useAccount();
   const [amountInput, setAmountInput] = useState<string>("");
+  const [isCreatingTasks, setIsCreatingTasks] = useState(false);
+  const [tasksCreated, setTasksCreated] = useState(false);
 
   const { data: targetAmount } = useReadContract({
     abi: CrowdfundAbi.abi as any,
@@ -120,6 +123,66 @@ export function CrowdfundWidget({ contractAddress }: Props) {
     } catch {}
   };
 
+  const createIRLTasks = async () => {
+    console.log("[IRL Tasks] createIRLTasks called", {
+      taskId,
+      isCreatingTasks,
+      tasksCreated,
+    });
+
+    if (!taskId) {
+      console.warn("[IRL Tasks] No taskId provided, skipping task creation");
+      return;
+    }
+
+    if (isCreatingTasks) {
+      console.warn("[IRL Tasks] Already creating tasks, skipping");
+      return;
+    }
+
+    if (tasksCreated) {
+      console.warn("[IRL Tasks] Tasks already created, skipping");
+      return;
+    }
+
+    console.log("[IRL Tasks] Starting task creation for taskId:", taskId);
+    setIsCreatingTasks(true);
+
+    try {
+      const payload = { task_id: taskId };
+      console.log("[IRL Tasks] Sending request to /api/irl-agents/tasks with payload:", payload);
+
+      const response = await fetch("/api/irl-agents/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      console.log("[IRL Tasks] Response status:", response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        console.error("[IRL Tasks] Failed to create IRL tasks:", {
+          status: response.status,
+          statusText: response.statusText,
+          errorData,
+        });
+        return;
+      }
+
+      const data = await response.json();
+      console.log("[IRL Tasks] ✅ IRL tasks created successfully:", data);
+      setTasksCreated(true);
+    } catch (error) {
+      console.error("[IRL Tasks] ❌ Error creating IRL tasks:", error);
+    } finally {
+      setIsCreatingTasks(false);
+      console.log("[IRL Tasks] Finished task creation process");
+    }
+  };
+
   // Refresh basic reads after any tx success
   if (isTxSuccess) {
     refetchTotalRaised();
@@ -131,6 +194,28 @@ export function CrowdfundWidget({ contractAddress }: Props) {
   const fmt = (v?: bigint) => (v !== undefined ? formatUnits(v, decimals) : "-");
 
   const canWithdraw = Boolean(isCompleted) && address && receiverAddress && (address as string).toLowerCase() === (receiverAddress as string).toLowerCase();
+
+  // Trigger IRL tasks creation when crowdfunding is completed
+  useEffect(() => {
+    console.log("[IRL Tasks] useEffect triggered", {
+      isCompleted,
+      tasksCreated,
+      taskId,
+    });
+
+    // Simply check if crowdfunding is completed (Status: Completed)
+    if (isCompleted && !tasksCreated && taskId) {
+      console.log("[IRL Tasks] ✅ Crowdfunding completed! Calling createIRLTasks");
+      createIRLTasks();
+    } else {
+      console.log("[IRL Tasks] ⏸️ Conditions not met:", {
+        needsCompleted: !isCompleted,
+        alreadyCreated: tasksCreated,
+        missingTaskId: !taskId,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCompleted, tasksCreated, taskId]);
 
   return (
     <Card>
@@ -172,10 +257,16 @@ export function CrowdfundWidget({ contractAddress }: Props) {
         </div>
 
         {canWithdraw ? (
-          <div className="pt-2">
+          <div className="pt-2 space-y-2">
             <Button variant="secondary" onClick={withdraw} disabled={isPending || isTxLoading}>
               {isPending || isTxLoading ? "Withdrawing..." : "Withdraw"}
             </Button>
+            {isCreatingTasks && (
+              <p className="text-xs text-muted-foreground">Creating IRL agent tasks...</p>
+            )}
+            {tasksCreated && (
+              <p className="text-xs text-green-600">IRL agent tasks created successfully!</p>
+            )}
           </div>
         ) : null}
       </CardContent>
